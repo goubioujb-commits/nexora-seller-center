@@ -27,7 +27,7 @@ type Ctx = {
   requests: any[];
   people: Record<string, any>;
   refresh: () => Promise<void>;
-  saveListing: (f: ListingForm, submit: boolean) => Promise<string | null>;
+  saveListing: (f: ListingForm, submit: boolean) => Promise<{ error: string | null; id: string | null }>;
   setStatus: (id: string, status: string) => Promise<string | null>;
   moderate: (id: string, kind: 'approve' | 'fix' | 'reject', message: string) => Promise<string | null>;
   requestMiddleman: (listingId: string, buyer: string, priceEuros: number) => Promise<string | null>;
@@ -69,7 +69,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const [p, l, t, r] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', uid).single(),
-      supabase.from('listings').select('*, listing_monsters(*)').order('created_at', { ascending: false }),
+      supabase.from('listings').select('*, listing_monsters(*), listing_images(id,storage_path,position)').order('created_at', { ascending: false }),
       supabase.from('transactions').select('*').order('created_at', { ascending: false }),
       supabase.from('middleman_requests').select('*').order('created_at', { ascending: false }),
     ]);
@@ -125,7 +125,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     refresh,
 
     saveListing: async (f, submit) => {
-      if (!uid) return 'Non connecté';
+      if (!uid) return { error: 'Non connecté', id: null };
       const base = f.id ? mine.find((l) => l.id === f.id) : null;
       const fields = {
         title: f.title.trim(),
@@ -137,28 +137,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
       let id = f.id;
       if (!base) {
         const { data, error } = await supabase.from('listings').insert({ ...fields, seller_id: uid }).select('id').single();
-        if (error) return error.message;
+        if (error) return { error: error.message, id: null };
         id = data.id;
       } else {
         const patch: any = { ...fields };
         if (['pending', 'rejected', 'archived'].includes(base.status)) patch.status = 'draft';
         const { error } = await supabase.from('listings').update(patch).eq('id', id);
-        if (error) return error.message;
+        if (error) return { error: error.message, id };
       }
       await supabase.from('listing_monsters').delete().eq('listing_id', id);
       if (f.monsters.length) {
         const { error } = await supabase
           .from('listing_monsters')
           .insert(f.monsters.map((m) => ({ listing_id: id, monster_name: m, is_ld5: false })));
-        if (error) return error.message;
+        if (error) return { error: error.message, id };
       }
       // Une annonce active modifiée repasse automatiquement en validation (règle côté base)
       if (submit && (!base || base.status !== 'active')) {
         const { error } = await supabase.from('listings').update({ status: 'pending' }).eq('id', id);
-        if (error) return error.message;
+        if (error) return { error: error.message, id };
       }
       await refresh();
-      return null;
+      return { error: null, id };
     },
 
     setStatus: (id, status) => run(() => supabase.from('listings').update({ status }).eq('id', id)),
